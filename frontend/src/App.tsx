@@ -41,12 +41,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('agentzero-mode', 'genlayer');
 
+    // Support multiple EVM wallets: MetaMask, WalletConnect, OKX, and any standard EIP-1193 provider
     const eth = (window as {
       ethereum?: {
         on: (event: string, cb: (accounts: string[]) => void) => void;
         removeListener?: (event: string, cb: (accounts: string[]) => void) => void;
       };
-    }).ethereum;
+      okxwallet?: {
+        on: (event: string, cb: (accounts: string[]) => void) => void;
+        removeListener?: (event: string, cb: (accounts: string[]) => void) => void;
+      };
+    }).ethereum || (window as any).okxwallet;
 
     if (eth) {
       const handleAccountsChanged = (accounts: string[]) => {
@@ -73,9 +78,10 @@ export default function App() {
   }, [walletAddress]);
 
   const connect = useCallback(async () => {
-    const eth = (window as { ethereum?: { request: (args: { method: string }) => Promise<string[]> } }).ethereum;
+    // Support multiple EVM wallets: MetaMask, WalletConnect, OKX, and any standard EIP-1193 provider
+    const eth = (window as any).ethereum || (window as any).okxwallet;
     if (!eth) {
-      alert('Please install MetaMask or another Web3 wallet.');
+      alert('Please install MetaMask, OKX Wallet, or another Web3 wallet.');
       return;
     }
     setConnectLoading(true);
