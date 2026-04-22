@@ -5,6 +5,7 @@
  */
 
 import cron from "node-cron";
+import http from "node:http";
 import {
   getBridgeSyncInterval,
   getEvmToGlSyncInterval,
@@ -15,6 +16,25 @@ import { EvmToGenLayerRelay } from "./relay/EvmToGenLayer.js";
 
 async function main() {
   console.log("Starting Bridge Service");
+
+  // Optional health endpoint for platforms that expect an HTTP listener (e.g., Render Web Service).
+  const port = process.env.PORT;
+  if (port) {
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Bridge service is running");
+    });
+
+    server.listen(Number(port), () => {
+      console.log(`Health server listening on :${port}`);
+    });
+  }
 
   // GenLayer -> EVM relay
   const glToEvm = new GenLayerToEvmRelay();

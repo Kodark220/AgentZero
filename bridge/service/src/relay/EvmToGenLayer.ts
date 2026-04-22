@@ -7,7 +7,7 @@
 
 import { ethers } from "ethers";
 import { createAccount, createClient } from "genlayer-js";
-import { studionet } from "genlayer-js/chains";
+import { testnetBradbury } from "genlayer-js/chains";
 import type { Address } from "genlayer-js/types";
 import {
   getBridgeReceiverIcAddress,
@@ -54,7 +54,7 @@ export class EvmToGenLayerRelay {
     const account = createAccount(`0x${privateKey.replace(/^0x/, "")}`);
     this.genLayerClient = createClient({
       chain: {
-        ...studionet,
+        ...testnetBradbury,
         rpcUrls: {
           default: { http: [getGenlayerRpcUrl()] },
         },

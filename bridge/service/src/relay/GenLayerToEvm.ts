@@ -7,7 +7,7 @@
 
 import { ethers } from "ethers";
 import { createAccount, createClient } from "genlayer-js";
-import { studionet } from "genlayer-js/chains";
+import { testnetBradbury } from "genlayer-js/chains";
 import type { Address } from "genlayer-js/types";
 import { Options } from "@layerzerolabs/lz-v2-utilities";
 import {
@@ -23,6 +23,12 @@ interface BridgeMessage {
   targetContract: string;
   data: string;
 }
+
+type MessageRecord = {
+  target_chain_id?: number | string;
+  target_contract?: string;
+  data?: string | Uint8Array | number[];
+};
 
 const BRIDGE_FORWARDER_ABI = [
   "function callRemoteArbitrary(bytes32 txHash, uint32 dstEid, bytes data, bytes options) external payable",
@@ -52,7 +58,7 @@ export class GenLayerToEvmRelay {
     const account = createAccount(`0x${privateKey.replace(/^0x/, "")}`);
     this.genLayerClient = createClient({
       chain: {
-        ...studionet,
+        ...testnetBradbury,
         rpcUrls: {
           default: { http: [getGenlayerRpcUrl()] },
         },
@@ -61,6 +67,46 @@ export class GenLayerToEvmRelay {
     });
 
     this.usedHashes = new Set<string>();
+  }
+
+  private normalizeHash(hash: string): string {
+    return String(hash).replace(/^0x/, "").toLowerCase();
+  }
+
+  private normalizeHexData(data: unknown): string {
+    if (typeof data === "string") {
+      if (data.startsWith("0x")) {
+        return data;
+      }
+      return `0x${data}`;
+    }
+
+    if (data instanceof Uint8Array || Buffer.isBuffer(data)) {
+      return `0x${Buffer.from(data).toString("hex")}`;
+    }
+
+    if (Array.isArray(data)) {
+      return `0x${Buffer.from(data).toString("hex")}`;
+    }
+
+    throw new Error(`Unsupported message data type: ${typeof data}`);
+  }
+
+  private extractMessageRecord(value: unknown): MessageRecord {
+    if (value && typeof value === "object") {
+      if (typeof (value as Map<string, unknown>).get === "function") {
+        const map = value as Map<string, unknown>;
+        return {
+          target_chain_id: map.get("target_chain_id") as number | string,
+          target_contract: map.get("target_contract") as string,
+          data: map.get("data") as string | Uint8Array | number[],
+        };
+      }
+
+      return value as MessageRecord;
+    }
+
+    throw new Error("Unexpected get_message return type");
   }
 
   private async getPendingMessages(): Promise<string[]> {
@@ -77,9 +123,9 @@ export class GenLayerToEvmRelay {
         return [];
       }
 
-      return response.filter(
-        (hash): hash is string => !this.usedHashes.has(hash)
-      );
+      return response
+        .map((hash) => this.normalizeHash(String(hash)))
+        .filter((hash) => !this.usedHashes.has(hash));
     } catch (error) {
       console.error("Error fetching messages:", error);
       return [];
@@ -91,36 +137,28 @@ export class GenLayerToEvmRelay {
       console.log(`[GL→EVM] Processing message ${hash}`);
 
       // Check if already relayed
-      const isUsed = await this.bridgeForwarder.isHashUsed(`0x${hash}`);
+      const hashHex = `0x${this.normalizeHash(hash)}`;
+      const isUsed = await this.bridgeForwarder.isHashUsed(hashHex);
       if (isUsed) {
         console.log(`[GL→EVM] Message ${hash} already relayed, skipping`);
         return;
       }
 
       // Get message from GenLayer
-      const messageResponse: Map<string, any> =
+      const messageResponse =
         await this.genLayerClient.readContract({
           address: getBridgeSenderAddress() as Address,
           functionName: "get_message",
-          args: [hash],
+          args: [this.normalizeHash(hash)],
           stateStatus: "accepted",
         });
 
-      // Convert data to hex
-      let messageData = messageResponse.get("data");
-      if (messageData instanceof Uint8Array || Buffer.isBuffer(messageData)) {
-        messageData = "0x" + Buffer.from(messageData).toString("hex");
-      } else if (
-        typeof messageData === "string" &&
-        !messageData.startsWith("0x")
-      ) {
-        messageData = "0x" + messageData;
-      }
+      const record = this.extractMessageRecord(messageResponse);
 
       const message: BridgeMessage = {
-        targetChainId: Number(messageResponse.get("target_chain_id")),
-        targetContract: messageResponse.get("target_contract"),
-        data: messageData,
+        targetChainId: Number(record.target_chain_id),
+        targetContract: String(record.target_contract),
+        data: this.normalizeHexData(record.data),
       };
 
       console.log(
@@ -146,7 +184,7 @@ export class GenLayerToEvmRelay {
 
       // Send via LayerZero
       const tx = await this.bridgeForwarder.callRemoteArbitrary(
-        `0x${hash}`,
+        hashHex,
         dstEid,
         message.data,
         optionsHex,
